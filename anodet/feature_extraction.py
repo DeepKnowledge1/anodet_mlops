@@ -96,7 +96,13 @@ class ResnetEmbeddingsExtractor(torch.nn.Module):
             batch_size, length, width, height = embedding_vectors.shape
             embedding_vectors = embedding_vectors.reshape(batch_size, length, width*height)
             embedding_vectors = embedding_vectors.permute(0, 2, 1)
-
+            
+            embedding_vectors = (
+                embedding_vectors.half()
+                if embedding_vectors.device.type != "cpu"
+                else embedding_vectors
+            )
+            
             return embedding_vectors
 
     def from_dataloader(self,
@@ -127,28 +133,13 @@ class ResnetEmbeddingsExtractor(torch.nn.Module):
 def concatenate_layers(layers: List[torch.Tensor]) -> torch.Tensor:
     """Scale all tensors to the heigth and width of the first tensor and concatenate them."""
 
-    expanded_layers = layers[0]
+    embeddings = layers[0]
+    size = embeddings.shape[-2:]
     for layer in layers[1:]:
-        expanded_layers = concatenate_two_layers(expanded_layers, layer)
-    return expanded_layers
+        layer_embedding = layer
+        layer_embedding = F.interpolate(
+            layer_embedding, size=embeddings.shape[-2:], mode="nearest"
+        )
+        embeddings = torch.cat((embeddings, layer_embedding), 1)
 
-
-def concatenate_two_layers(layer1: torch.Tensor, layer2: torch.Tensor) -> torch.Tensor:
-    """Scale the second tensor to the height and width of the first tensor and concatenate them."""
-
-    device = layer1.device
-    batch_length, channel_num1, height1, width1 = layer1.size()
-    _, channel_num2, height2, width2 = layer2.size()
-    height_ratio = int(height1 / height2)
-    layer1 = F.unfold(layer1, kernel_size=height_ratio, dilation=1, stride=height_ratio)
-    layer1 = layer1.view(batch_length, channel_num1, -1, height2, width2)
-    result = torch.zeros(batch_length, channel_num1 + channel_num2, layer1.size(2),
-                         height2, width2, device=device)
-    for i in range(layer1.size(2)):
-        result[:, :, i, :, :] = torch.cat((layer1[:, :, i, :, :], layer2), 1)
-    del layer1
-    del layer2
-    result = result.view(batch_length, -1, height2 * width2)
-    result = F.fold(result, kernel_size=height_ratio,
-                    output_size=(height1, width1), stride=height_ratio)
-    return result
+    return embeddings
