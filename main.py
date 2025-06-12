@@ -6,70 +6,84 @@ import cv2
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
-
-DATASET_PATH = os.path.realpath(r"D:\01-DATA\bottle")
-MODEL_DATA_PATH = os.path.realpath("./distributions/")
-os.makedirs(MODEL_DATA_PATH,exist_ok=True)
+import argparse
 
 
-dataset = anodet.AnodetDataset(os.path.join(DATASET_PATH, "train/good"))
-dataloader = DataLoader(dataset, batch_size=2)
-print("Number of images in dataset:", len(dataloader.dataset))
+# DATASET_PATH = os.path.realpath(r"D:\01-DATA\bottle")
+# MODEL_DATA_PATH = os.path.realpath("./distributions/")
+# os.makedirs(MODEL_DATA_PATH,exist_ok=True)
 
 
-padim = anodet.Padim(backbone='resnet18')
-
-padim.fit(dataloader)
-
-padim.export_onnx("padim_model.onnx")
+# dataset = anodet.AnodetDataset(os.path.join(DATASET_PATH, "train/good"))
+# dataloader = DataLoader(dataset, batch_size=2)
+# print("Number of images in dataset:", len(dataloader.dataset))
 
 
+# padim = anodet.Padim(backbone='resnet18')
+
+# padim.fit(dataloader)
+
+# padim.export_onnx("padim_model.onnx")
 
 
-# import os
-# from pathlib import Path
 
-# # Define the directory structure
-# structure = {
-#     "industrial_anodet_mlops": [
-#         "data",
-#         "src/model",
-#         "src",
-#         "deployment",
-#         "pipelines",
-#         "docker",
-#         "devops",
-#         "monitoring",
-#         "keyvault",
-#         "load_testing"
-#     ]
-# }
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train a PaDiM model for anomaly detection.")
 
-# # Files to create inside directories
-# files_to_create = {
-#     "src/model": ["padim.py", "utils.py"],
-#     "src": ["train.py", "inference.py", "fastapi_app.py", "logger.py", "monitor_drift.py", "metrics_logger.py"],
-#     "deployment": ["score.py", "environment.yml", "deployment.yml", "aks_compute.yml"],
-#     "pipelines": ["train_pipeline.yml", "deploy_pipeline.yml", "retrain_pipeline.yml"],
-#     "docker": ["Dockerfile.train", "Dockerfile.inference"],
-#     "devops": ["azure-pipelines.yml", "env-variables-template.yml"],
-#     "monitoring": ["app_insights_setup.py", "log_config.yaml", "drift_alert_setup.py"],
-#     "keyvault": ["setup_keyvault.py", "secrets_template.json"],
-#     "load_testing": ["locustfile.py"],
-#     "industrial_anodet_mlops": ["README.md"]
-# }
+    parser.add_argument('--dataset_path',default=r"D:\01-DATA\bottle", type=str, required=False,
+                        help='Path to the dataset folder containing "train/good" images.')
 
-# # Create directories and files
-# for base, dirs in structure.items():
-#     base_path = Path(base)
-#     for sub in dirs:
-#         dir_path = base_path / sub
-#         dir_path.mkdir(parents=True, exist_ok=True)
+    parser.add_argument('--model_data_path', type=str, default='./distributions/',
+                        help='Directory to save model distributions and ONNX file.')
 
-# # Create files
-# for dir_path, file_list in files_to_create.items():
-#     for file in file_list:
-#         file_path = Path("industrial_anodet_mlops") / dir_path / file
-#         file_path.touch(exist_ok=True)
+    parser.add_argument('--backbone', type=str, choices=['resnet18', 'wide_resnet50'], default='resnet18',
+                        help='Backbone network to use for feature extraction.')
 
-# print("Project structure created successfully.")
+    parser.add_argument('--batch_size', type=int, default=2,
+                        help='Batch size used during training and inference.')
+
+    parser.add_argument('--output_model', type=str, default='padim_model.onnx',
+                        help='Filename to save the exported ONNX model.')
+
+    parser.add_argument('--layer_indices', nargs='+', type=int, default=[0],
+                        help='List of layer indices to extract features from. Default: [0].')
+
+    parser.add_argument('--feat_dim', type=int, default=50,
+                        help='Number of random feature dimensions to keep.')
+
+    return parser.parse_args()
+
+
+def main(args):
+    # Set up paths
+    DATASET_PATH = os.path.realpath(args.dataset_path)
+    MODEL_DATA_PATH = os.path.realpath(args.model_data_path)
+    os.makedirs(MODEL_DATA_PATH, exist_ok=True)
+
+    # Load dataset
+    dataset = anodet.AnodetDataset(os.path.join(DATASET_PATH, "train/good"))
+    dataloader = DataLoader(dataset, batch_size=args.batch_size)
+    print("Number of images in dataset:", len(dataloader.dataset))
+
+    # Initialize device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Initialize model with args
+    padim = anodet.Padim(
+        backbone=args.backbone,
+        device=device,
+        layer_indices=args.layer_indices,
+        feat_dim=args.feat_dim
+    )
+
+    # Train model
+    padim.fit(dataloader)
+
+    # Export model to ONNX
+    onnx_path = os.path.join(MODEL_DATA_PATH, args.output_model)
+    padim.export_onnx(onnx_path)
+    print(f"Model saved to {onnx_path}")
+    
+if __name__ == "__main__":
+        args = parse_args()
+        main(args)

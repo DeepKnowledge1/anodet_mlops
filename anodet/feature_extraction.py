@@ -113,33 +113,53 @@ class ResnetEmbeddingsExtractor(torch.nn.Module):
                         ) -> torch.Tensor:
         """Same as self.forward but take a dataloader instead of a tensor as argument."""
 
-        embedding_vectors: Optional[torch.Tensor] = None
-
+        # Pre-allocate list to store embedding vectors
+        embedding_vectors_list: List[torch.Tensor] = []
+        
         for (batch, _, _) in tqdm(dataloader, 'Feature extraction'):
-
             batch_embedding_vectors = self(batch,
-                                           channel_indices=channel_indices,
-                                           layer_hook=layer_hook,
-                                           layer_indices=layer_indices)
+                                        channel_indices=channel_indices,
+                                        layer_hook=layer_hook,
+                                        layer_indices=layer_indices)
+            
+            # Move to CPU and detach to prevent GPU memory accumulation
+            batch_embedding_vectors = batch_embedding_vectors.detach().cpu()
+            embedding_vectors_list.append(batch_embedding_vectors)
+            
+            # Clear GPU cache periodically to prevent memory buildup
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        # Concatenate all tensors at once (more memory efficient than incremental concat)
+        embedding_vectors = torch.cat(embedding_vectors_list, dim=0)
+        
+        # # Move back to original device if needed
+        # if hasattr(self.backbone, 'device') or next(self.backbone.parameters()).device != torch.device('cpu'):
+        #     device = next(self.backbone.parameters()).device
+        #     embedding_vectors = embedding_vectors.to(device)
+        
+        return embedding_vectors
 
-            if embedding_vectors is None:
-                embedding_vectors = batch_embedding_vectors
-            else:
-                embedding_vectors = torch.cat((embedding_vectors, batch_embedding_vectors), 0)
-
-        return cast(torch.Tensor, embedding_vectors)
 
 
 def concatenate_layers(layers: List[torch.Tensor]) -> torch.Tensor:
-    """Scale all tensors to the heigth and width of the first tensor and concatenate them."""
+    # Assume all layers have same batch size and spatial dimensions as the first
+    batch_size, _, height, width = layers[0].shape
 
-    embeddings = layers[0]
-    size = embeddings.shape[-2:]
-    for layer in layers[1:]:
-        layer_embedding = layer
-        layer_embedding = F.interpolate(
-            layer_embedding, size=embeddings.shape[-2:], mode="nearest"
-        )
-        embeddings = torch.cat((embeddings, layer_embedding), 1)
+    # Compute total channels after concatenation
+    total_channels = sum(layer.shape[1] for layer in layers)
+
+    # Preallocate output tensor
+    device = layers[0].device
+    embeddings = torch.zeros((batch_size, total_channels, height, width), device=device)
+
+    # Keep track of current channel index
+    current_channel = 0
+
+    for layer in layers:
+        resized_layer = F.interpolate(layer, size=(height, width), mode='nearest')
+        num_channels = resized_layer.shape[1]
+        embeddings[:, current_channel:current_channel + num_channels, :, :] = resized_layer
+        current_channel += num_channels
 
     return embeddings
