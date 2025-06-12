@@ -143,23 +143,27 @@ class ResnetEmbeddingsExtractor(torch.nn.Module):
 
 
 def concatenate_layers(layers: List[torch.Tensor]) -> torch.Tensor:
-    # Assume all layers have same batch size and spatial dimensions as the first
-    batch_size, _, height, width = layers[0].shape
+    """
+    Resizes all feature maps to match the spatial dimensions of the first layer,
+    then concatenates them along the channel dimension.
 
-    # Compute total channels after concatenation
-    total_channels = sum(layer.shape[1] for layer in layers)
+    Args:
+        layers: A list of feature tensors of shape (B, C_i, H_i, W_i)
 
-    # Preallocate output tensor
-    device = layers[0].device
-    embeddings = torch.zeros((batch_size, total_channels, height, width), device=device)
+    Returns:
+        embeddings: Concatenated tensor of shape (B, sum(C_i), H, W),
+                    where H and W are from the first layer.
+    """
+    if not layers:
+        raise ValueError("The input list of layers is empty.")
 
-    # Keep track of current channel index
-    current_channel = 0
+    # Get target spatial size from the first layer
+    target_size = layers[0].shape[-2:]
 
-    for layer in layers:
-        resized_layer = F.interpolate(layer, size=(height, width), mode='nearest')
-        num_channels = resized_layer.shape[1]
-        embeddings[:, current_channel:current_channel + num_channels, :, :] = resized_layer
-        current_channel += num_channels
+    # Resize all layers to match the target size
+    resized_layers = [F.interpolate(l, size=target_size, mode='nearest') for l in layers]
 
-    return embeddings
+    # Concatenate once along the channel dimension
+    embedding = torch.cat(resized_layers, dim=1)
+
+    return embedding
